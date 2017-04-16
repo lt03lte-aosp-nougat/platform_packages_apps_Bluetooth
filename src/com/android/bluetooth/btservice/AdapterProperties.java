@@ -37,6 +37,7 @@ class AdapterProperties {
     private static final boolean DBG = true;
     private static final boolean VDBG = false;
     private static final String TAG = "BluetoothAdapterProperties";
+    private static final int BLUETOOTH_NAME_MAX_LENGTH_BYTES = 248;
 
     private static final int BD_ADDR_LEN = 6; // 6 bytes
     private volatile String mName;
@@ -116,6 +117,8 @@ class AdapterProperties {
      */
     boolean setName(String name) {
         synchronized (mObject) {
+            if (name.length() > BLUETOOTH_NAME_MAX_LENGTH_BYTES)
+                name =  name.substring(0, BLUETOOTH_NAME_MAX_LENGTH_BYTES);
             return mService.setAdapterPropertyNative(
                     AbstractionLayer.BT_PROPERTY_BDNAME, name.getBytes());
         }
@@ -500,8 +503,8 @@ class AdapterProperties {
                         mService.sendBroadcast(intent, mService.BLUETOOTH_PERM);
                         debugLog("Scan Mode:" + mScanMode);
                         if (mBluetoothDisabling) {
-                            mBluetoothDisabling=false;
-                            mService.startBluetoothDisable();
+                            mBluetoothDisabling = false;
+                            mService.startBrEdrCleanup();
                         }
                         break;
                     case AbstractionLayer.BT_PROPERTY_UUIDS:
@@ -605,6 +608,10 @@ class AdapterProperties {
         }
     }
 
+    void clearDisableFlag() {
+        mBluetoothDisabling = false;
+    }
+
     void onBluetoothDisable() {
         // From STATE_ON to BLE_ON
         // When BT disable is invoked, set the scan_mode to NONE
@@ -625,7 +632,7 @@ class AdapterProperties {
         infoLog("Callback:discoveryStateChangeCallback with state:" + state);
         synchronized (mObject) {
             Intent intent;
-            if (state == AbstractionLayer.BT_DISCOVERY_STOPPED) {
+            if ((state == AbstractionLayer.BT_DISCOVERY_STOPPED) && mDiscovering) {
                 mDiscovering = false;
                 intent = new Intent(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
                 mService.sendBroadcast(intent, mService.BLUETOOTH_PERM);

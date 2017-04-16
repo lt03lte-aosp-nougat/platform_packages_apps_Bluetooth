@@ -33,6 +33,7 @@
 package com.android.bluetooth.opp;
 
 import com.android.bluetooth.R;
+import com.android.bluetooth.btservice.AdapterService;
 
 import android.content.Context;
 import android.app.Notification;
@@ -40,6 +41,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.database.Cursor;
+import android.database.CursorWindowAllocationException;
+import android.database.sqlite.SQLiteException;
 import android.net.Uri;
 import android.text.format.Formatter;
 import android.util.Log;
@@ -56,7 +59,7 @@ import java.util.HashMap;
  */
 class BluetoothOppNotification {
     private static final String TAG = "BluetoothOppNotification";
-    private static final boolean V = Constants.VERBOSE;
+    private static final boolean V = Log.isLoggable(Constants.TAG, Log.VERBOSE);
 
     static final String status = "(" + BluetoothShare.STATUS + " == '192'" + ")";
 
@@ -79,6 +82,10 @@ class BluetoothOppNotification {
             " AND " + not_through_handover; // Don't show handover-initiated transfers
 
     private static final String WHERE_COMPLETED_OUTBOUND = WHERE_COMPLETED + " AND " + "("
+            + BluetoothShare.DIRECTION + " == " + BluetoothShare.DIRECTION_OUTBOUND + ")";
+
+    private static final String WHERE_ALL_OUTBOUND = visible +
+            " AND " + not_through_handover + " AND " + "("
             + BluetoothShare.DIRECTION + " == " + BluetoothShare.DIRECTION_OUTBOUND + ")";
 
     private static final String WHERE_COMPLETED_INBOUND = WHERE_COMPLETED + " AND " + "("
@@ -105,6 +112,7 @@ class BluetoothOppNotification {
 
     private int mActiveNotificationId = 0;
 
+    private boolean mUpdateCount = false;
     /**
      * This inner class is used to describe some properties for one transfer.
      */
@@ -145,7 +153,7 @@ class BluetoothOppNotification {
     public void updateNotification() {
         synchronized (BluetoothOppNotification.this) {
             mPendingUpdate++;
-            if (mPendingUpdate > 1) {
+            if ((mPendingUpdate > 1) && (mUpdateNotificationThread != null)) {
                 if (V) Log.v(TAG, "update too frequent, put in queue");
                 return;
             }
@@ -153,6 +161,20 @@ class BluetoothOppNotification {
                 if (V) Log.v(TAG, "send message");
                 mHandler.sendMessage(mHandler.obtainMessage(NOTIFY));
             }
+        }
+    }
+
+    public void updateNotifier() {
+        if (V) Log.v(TAG, "updateNotifier while BT is Turning OFF");
+        synchronized (BluetoothOppNotification.this) {
+            if (mHandler != null) {
+                mHandler.removeCallbacksAndMessages(null);
+            }
+            updateActiveNotification();
+            if (V) Log.v(TAG, "Update Inbound and Outbound count");
+            mUpdateCompleteNotification = true;
+            updateCompletedNotification(true);
+            cancelIncomingFileConfirmNotification();
         }
     }
 
@@ -202,7 +224,7 @@ class BluetoothOppNotification {
                 mPendingUpdate = 0;
             }
             updateActiveNotification();
-            updateCompletedNotification();
+            updateCompletedNotification(false);
             updateIncomingFileConfirmNotification();
             synchronized (BluetoothOppNotification.this) {
                 mUpdateNotificationThread = null;
@@ -212,8 +234,15 @@ class BluetoothOppNotification {
 
     private void updateActiveNotification() {
         // Active transfers
-        Cursor cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
+        Cursor cursor;
+        try {
+            cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
                 WHERE_RUNNING, null, BluetoothShare._ID);
+        } catch (SQLiteException e) {
+            cursor = null;
+            Log.e(TAG, "SQLite exception: " + e);
+        }
+
         if (cursor == null) {
             return;
         }
@@ -287,6 +316,7 @@ class BluetoothOppNotification {
             }
         }
         cursor.close();
+        cursor = null;
 
         // Add the notifications
         for (NotificationItem item : mNotifications.values()) {
@@ -316,7 +346,7 @@ class BluetoothOppNotification {
             // Build the notification object
             // TODO: split description into two rows with filename in second row
             Notification.Builder b = new Notification.Builder(mContext);
-            b.setColor(mContext.getResources().getColor(
+            b.setColor(mContext.getColor(
                     com.android.internal.R.color.system_notification_accent_color));
             b.setContentTitle(item.description);
             b.setContentInfo(
@@ -345,13 +375,17 @@ class BluetoothOppNotification {
             intent.setDataAndNormalize(Uri.parse(BluetoothShare.CONTENT_URI + "/" + item.id));
 
             b.setContentIntent(PendingIntent.getBroadcast(mContext, 0, intent, 0));
-            mNotificationMgr.notify(item.id, b.getNotification());
+            mNotificationMgr.notify(item.id, b.build());
 
-            mActiveNotificationId = item.id;
+            if (mActiveNotificationId != item.id) {
+                mActiveNotificationId = item.id;
+                AdapterService.oppNotificationId = item.id;
+                mUpdateCount = true;
+            }
         }
     }
 
-    private void updateCompletedNotification() {
+    private void updateCompletedNotification(boolean btTurningOff) {
         String title;
         String unsuccess_caption;
         String caption;
@@ -366,23 +400,32 @@ class BluetoothOppNotification {
 
         // If there is active transfer, no need to update complete transfer
         // notification
-        if (!mUpdateCompleteNotification) {
+        if (!mUpdateCompleteNotification && !mUpdateCount) {
             if (V) Log.v(TAG, "No need to update complete notification");
             return;
         }
+        mUpdateCount = false;
 
         // After merge complete notifications to 2 notifications, there is no
         // chance to update the active notifications to complete notifications
         // as before. So need cancel the active notification after the active
         // transfer becomes complete.
-        if (mNotificationMgr != null && mActiveNotificationId != 0) {
+        if (mNotificationMgr != null && mActiveNotificationId != 0 && mUpdateCompleteNotification) {
             mNotificationMgr.cancel(mActiveNotificationId);
             if (V) Log.v(TAG, "ongoing transfer notification was removed");
         }
+        if (V) Log.v(TAG, "updateCompletedNotification, btTurningOff: " + btTurningOff);
 
         // Creating outbound notification
-        Cursor cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
-                WHERE_COMPLETED_OUTBOUND, null, BluetoothShare.TIMESTAMP + " DESC");
+        Cursor cursor;
+        try {
+            String selection = btTurningOff ? WHERE_ALL_OUTBOUND : WHERE_COMPLETED_OUTBOUND;
+            cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
+                   selection, null, BluetoothShare.TIMESTAMP + " DESC");
+        } catch (SQLiteException e) {
+            cursor = null;
+            Log.e(TAG, "SQLite exception: " + e);
+        }
         if (cursor == null) {
             return;
         }
@@ -397,7 +440,8 @@ class BluetoothOppNotification {
             }
             int status = cursor.getInt(statusIndex);
 
-            if (BluetoothShare.isStatusError(status)) {
+            if (BluetoothShare.isStatusError(status)
+                    || (btTurningOff && BluetoothShare.isStatusInformational(status))) {
                 outboundFailNumber++;
             } else {
                 outboundSuccNumber++;
@@ -405,6 +449,7 @@ class BluetoothOppNotification {
         }
         if (V) Log.v(TAG, "outbound: succ-" + outboundSuccNumber + "  fail-" + outboundFailNumber);
         cursor.close();
+        cursor = null;
 
         outboundNum = outboundSuccNumber + outboundFailNumber;
         // create the outbound notification
@@ -419,7 +464,7 @@ class BluetoothOppNotification {
                     unsuccess_caption);
             intent = new Intent(Constants.ACTION_OPEN_OUTBOUND_TRANSFER);
             intent.setClassName(Constants.THIS_PACKAGE_NAME, BluetoothOppReceiver.class.getName());
-            outNoti.color = mContext.getResources().getColor(
+            outNoti.color = mContext.getColor(
                     com.android.internal.R.color.system_notification_accent_color);
             outNoti.setLatestEventInfo(mContext, title, caption, PendingIntent.getBroadcast(
                     mContext, 0, intent, 0));
@@ -436,8 +481,14 @@ class BluetoothOppNotification {
         }
 
         // Creating inbound notification
-        cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
+        try {
+            cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
                 WHERE_COMPLETED_INBOUND, null, BluetoothShare.TIMESTAMP + " DESC");
+        } catch (SQLiteException e) {
+            cursor = null;
+            Log.e(TAG, "SQLite exception: " + e);
+        }
+
         if (cursor == null) {
             return;
         }
@@ -457,6 +508,7 @@ class BluetoothOppNotification {
         }
         if (V) Log.v(TAG, "inbound: succ-" + inboundSuccNumber + "  fail-" + inboundFailNumber);
         cursor.close();
+        cursor = null;
 
         inboundNum = inboundSuccNumber + inboundFailNumber;
         // create the inbound notification
@@ -471,7 +523,7 @@ class BluetoothOppNotification {
                     unsuccess_caption);
             intent = new Intent(Constants.ACTION_OPEN_INBOUND_TRANSFER);
             intent.setClassName(Constants.THIS_PACKAGE_NAME, BluetoothOppReceiver.class.getName());
-            inNoti.color = mContext.getResources().getColor(
+            inNoti.color = mContext.getColor(
                     com.android.internal.R.color.system_notification_accent_color);
             inNoti.setLatestEventInfo(mContext, title, caption, PendingIntent.getBroadcast(
                     mContext, 0, intent, 0));
@@ -489,14 +541,21 @@ class BluetoothOppNotification {
     }
 
     private void updateIncomingFileConfirmNotification() {
-        Cursor cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
+        Cursor cursor;
+        try {
+            cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
                 WHERE_CONFIRM_PENDING, null, BluetoothShare._ID);
+        } catch (SQLiteException e) {
+            cursor = null;
+            Log.e(TAG, "SQLite exception: " + e);
+        }
 
         if (cursor == null) {
             return;
         }
 
         for (cursor.moveToFirst(); !cursor.isAfterLast(); cursor.moveToNext()) {
+
           BluetoothOppTransferInfo info = new BluetoothOppTransferInfo();
           BluetoothOppUtility.fillRecord(mContext, cursor, info);
           Uri contentUri = Uri.parse(BluetoothShare.CONTENT_URI + "/" + info.mID);
@@ -522,7 +581,7 @@ class BluetoothOppNotification {
                   new Intent(baseIntent).setAction(Constants.ACTION_INCOMING_FILE_CONFIRM), 0))
               .setDeleteIntent(PendingIntent.getBroadcast(mContext, 0,
                   new Intent(baseIntent).setAction(Constants.ACTION_HIDE), 0))
-              .setColor(mContext.getResources().getColor(
+              .setColor(mContext.getColor(
                   com.android.internal.R.color.system_notification_accent_color))
               .setContentTitle(mContext.getText(R.string.incoming_file_confirm_Notification_title))
               .setContentText(info.mFileName)
@@ -533,7 +592,44 @@ class BluetoothOppNotification {
               .setSmallIcon(R.drawable.bt_incomming_file_notification)
               .build();
           mNotificationMgr.notify(info.mID, n);
+          Log.i(TAG, " Incoming Notification ID :" + info.mID);
+          AdapterService.oppNotificationId = info.mID;
         }
         cursor.close();
+        cursor = null;
     }
+
+
+    private void cancelIncomingFileConfirmNotification() {
+        Cursor cursor = null;
+        try {
+            cursor = mContext.getContentResolver().query(BluetoothShare.CONTENT_URI, null,
+                WHERE_CONFIRM_PENDING, null, BluetoothShare._ID);
+        } catch (SQLiteException e) {
+            if (cursor != null) {
+                cursor.close();
+            }
+            cursor = null;
+            Log.e(TAG, "cancelupdateIncomingFileConfirmNotification: " + e);
+        } catch (CursorWindowAllocationException e) {
+            cursor = null;
+            Log.e(TAG, "cancelupdateIncomingFileConfirmNotification: " + e);
+        }
+
+
+        if (cursor == null) {
+            return;
+        }
+
+        for (cursor.moveToFirst(); !cursor.isAfterLast(); cursor.moveToNext()) {
+            int id = cursor.getInt(cursor.getColumnIndexOrThrow(BluetoothShare._ID));
+            if (V) Log.v(TAG, "Cancelling incoming notification " + id);
+            mNotificationMgr.cancel(id);
+        }
+        cursor.close();
+        if (V) Log.v(TAG, "Freeing cursor: " + cursor);
+        cursor = null;
+        AdapterService.oppNotificationId = 0;
+    }
+
 }

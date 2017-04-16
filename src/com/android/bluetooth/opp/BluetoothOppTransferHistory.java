@@ -40,6 +40,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
+import android.database.StaleDataException;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
@@ -62,7 +63,7 @@ public class BluetoothOppTransferHistory extends Activity implements
         View.OnCreateContextMenuListener, OnItemClickListener {
     private static final String TAG = "BluetoothOppTransferHistory";
 
-    private static final boolean V = Constants.VERBOSE;
+    private static final boolean V = Log.isLoggable(Constants.TAG, Log.VERBOSE);
 
     private ListView mListView;
 
@@ -171,6 +172,10 @@ public class BluetoothOppTransferHistory extends Activity implements
 
     @Override
     public boolean onContextItemSelected(MenuItem item) {
+        if (mTransferCursor.getCount() == 0) {
+            Log.i(TAG," History is already Clear - Not clearing again ");
+            return true;
+        }
         mTransferCursor.moveToPosition(mContextMenuPosition);
         switch (item.getItemId()) {
             case R.id.transfer_menu_open:
@@ -230,15 +235,25 @@ public class BluetoothOppTransferHistory extends Activity implements
      */
     private int getClearableCount() {
         int count = 0;
-        if (mTransferCursor.moveToFirst()) {
-            while (!mTransferCursor.isAfterLast()) {
-                int statusColumnId = mTransferCursor.getColumnIndexOrThrow(BluetoothShare.STATUS);
-                int status = mTransferCursor.getInt(statusColumnId);
-                if (BluetoothShare.isStatusCompleted(status)) {
-                    count++;
+        try {
+            if (mTransferCursor.moveToFirst()) {
+                while (!mTransferCursor.isAfterLast()) {
+                    int statusColumnId = mTransferCursor.getColumnIndexOrThrow
+                                             (BluetoothShare.STATUS);
+                    int status = mTransferCursor.getInt(statusColumnId);
+                    if (BluetoothShare.isStatusCompleted(status)) {
+                        count++;
+                        /*
+                         * Single count is enough, to show clear all UI option
+                         * so interrupt the loop
+                         */
+                        break;
+                    }
+                    mTransferCursor.moveToNext();
                 }
-                mTransferCursor.moveToNext();
             }
+        } catch(StaleDataException e) {
+            Log.e(TAG, "Activity paused " + e.toString());
         }
         return count;
     }

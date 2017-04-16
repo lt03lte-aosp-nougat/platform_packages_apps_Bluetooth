@@ -33,6 +33,8 @@ public class BluetoothMapMessageListing {
     private static final boolean D = BluetoothMapService.DEBUG;
 
     private List<BluetoothMapMessageListingElement> mList;
+    private static final String BENZ_CARKIT = "00:26:e8";
+    private static final String BREZZA_CARKIT = "28:a1:83";
 
     public BluetoothMapMessageListing(){
         mList = new ArrayList<BluetoothMapMessageListingElement>();
@@ -90,11 +92,24 @@ public class BluetoothMapMessageListing {
     // TODO: Remove includeThreadId when MAP-IM is adopted
     public byte[] encode(boolean includeThreadId, String version) throws UnsupportedEncodingException {
         StringWriter sw = new StringWriter();
-        XmlSerializer xmlMsgElement = new FastXmlSerializer();
+        XmlSerializer xmlMsgElement = null;
+        boolean isBenzCarkit = BluetoothMapService.getRemoteDevice().getAddress().toLowerCase()
+                .startsWith(BENZ_CARKIT);
+        if(D) Log.d(TAG, "Remote is BENZ CARKIT: " + isBenzCarkit);
+        if(isBenzCarkit) {
+            xmlMsgElement = Xml.newSerializer();
+        } else {
+            xmlMsgElement = new FastXmlSerializer();
+        }
         try {
             xmlMsgElement.setOutput(sw);
-            xmlMsgElement.startDocument("UTF-8", true);
-            xmlMsgElement.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
+            if(isBenzCarkit) {
+                xmlMsgElement.text("\n");
+            } else {
+                xmlMsgElement.startDocument("UTF-8", true);
+                xmlMsgElement.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output",
+                        true);
+            }
             xmlMsgElement.startTag(null, "MAP-msg-listing");
             xmlMsgElement.attribute(null, "version", version);
             // Do the XML encoding of list
@@ -110,6 +125,11 @@ public class BluetoothMapMessageListing {
         } catch (IOException e) {
             Log.w(TAG, e);
         }
+        /* Fix IOT issue to replace '&amp;' by '&', &lt; by < and '&gt; by '>' in MessageListing*/
+        if (BluetoothMapService.getRemoteDevice().getAddress().toLowerCase()
+                .startsWith(BREZZA_CARKIT))
+            return sw.toString().replaceAll("&amp;","&").replaceAll("&lt;","<")
+                .replaceAll("&gt;",">").getBytes("UTF-8");
         return sw.toString().getBytes("UTF-8");
     }
 

@@ -50,6 +50,15 @@ class HeadsetPhoneState {
     // Number of held (background) calls
     private int mNumHeld = 0;
 
+    // Phone Number
+    private String mNumber;
+
+    // Type of Phone Number
+    private int mType = 0;
+
+    // If CS call
+    private boolean mIsCsCall = true;
+
     // HFP 1.6 CIND signal
     private int mSignal = 0;
 
@@ -89,6 +98,7 @@ class HeadsetPhoneState {
         mTelephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         mContext = context;
 
+        Log.d(TAG, "HeadsetPhoneState");
         // Register for SubscriptionInfo list changes which is guaranteed
         // to invoke onSubscriptionInfoChanged and which in turns calls
         // loadInBackgroud.
@@ -97,6 +107,7 @@ class HeadsetPhoneState {
     }
 
     public void cleanup() {
+        Log.d(TAG, "cleanup");
         listenForPhoneState(false);
         mSubMgr.removeOnSubscriptionsChangedListener(mOnSubscriptionsChangedListener);
 
@@ -107,37 +118,55 @@ class HeadsetPhoneState {
     void listenForPhoneState(boolean start) {
 
         mSlcReady = start;
+        Log.d(TAG, "Enter listenForPhoneState");
 
         if (start) {
             startListenForPhoneState();
         } else {
             stopListenForPhoneState();
         }
+        Log.d(TAG, "Exit listenForPhoneState");
 
     }
 
     private void startListenForPhoneState() {
         if (!mListening && mSlcReady && mTelephonyManager != null) {
+            Log.d(TAG, "Enter startListenForPhoneState");
 
             int subId = SubscriptionManager.getDefaultSubscriptionId();
 
             if (SubscriptionManager.isValidSubscriptionId(subId)) {
                 mPhoneStateListener = getPhoneStateListener(subId);
 
-                mTelephonyManager.listen(mPhoneStateListener,
+                try {
+                    mTelephonyManager.listen(mPhoneStateListener,
                                          PhoneStateListener.LISTEN_SERVICE_STATE |
                                          PhoneStateListener.LISTEN_SIGNAL_STRENGTHS);
-                mListening = true;
+                    mListening = true;
+                } catch (NullPointerException npe) {
+                    // Handle case where Telephoneymanager crashes
+                    // and context becomes NULL
+                    Log.e(TAG, "NullPointerException for Telephonymanager while startListen", npe);
+                }
+
             }
         }
+        Log.d(TAG, "Exit startListenForPhoneState");
     }
 
     private void stopListenForPhoneState() {
         if (mListening && mTelephonyManager != null) {
-
-            mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+            Log.d(TAG, "Enter stopListenForPhoneState");
+            try {
+                mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+            } catch (NullPointerException npe) {
+                // Handle case where Telephoneymanager crashes
+                // and context becomes NULL
+                Log.e(TAG, "NullPointerException for Telephonymanager while stopListen", npe);
+            }
             mListening = false;
         }
+        Log.d(TAG, "Exit stopListenForPhoneState");
     }
 
     int getService() {
@@ -150,6 +179,14 @@ class HeadsetPhoneState {
 
     void setNumActiveCall(int numActive) {
         mNumActive = numActive;
+    }
+
+    boolean getIsCsCall() {
+        return mIsCsCall;
+    }
+
+    void setIsCsCall(boolean isCsCall) {
+        mIsCsCall = isCsCall;
     }
 
     int getCallState() {
@@ -166,6 +203,23 @@ class HeadsetPhoneState {
 
     void setNumHeldCall(int numHeldCall) {
         mNumHeld = numHeldCall;
+    }
+
+    void setNumber(String mNumberCall ) {
+        mNumber = mNumberCall;
+    }
+
+    String getNumber()
+    {
+        return mNumber;
+    }
+
+    void setType(int mTypeCall) {
+        mType = mTypeCall;
+    }
+
+    int getType() {
+        return mType;
     }
 
     int getSignal() {
@@ -234,6 +288,7 @@ class HeadsetPhoneState {
         PhoneStateListener mPhoneStateListener = new PhoneStateListener(subId) {
             @Override
             public void onServiceStateChanged(ServiceState serviceState) {
+                Log.d(TAG, "Enter onServiceStateChanged");
 
                 mServiceState = serviceState;
                 mService = (serviceState.getState() == ServiceState.STATE_IN_SERVICE) ?
@@ -243,12 +298,14 @@ class HeadsetPhoneState {
                                                   : HeadsetHalConstants.SERVICE_TYPE_HOME);
 
                 sendDeviceStateChanged();
+                Log.d(TAG, "Exit onServiceStateChanged");
             }
 
             @Override
             public void onSignalStrengthsChanged(SignalStrength signalStrength) {
 
                 int prevSignal = mSignal;
+                Log.d(TAG, "Enter onSignalStrengthsChanged");
                 if (mService == HeadsetHalConstants.NETWORK_STATE_NOT_AVAILABLE) {
                     mSignal = 0;
                 } else if (signalStrength.isGsm()) {
@@ -270,6 +327,7 @@ class HeadsetPhoneState {
                 if (prevSignal != mSignal) {
                     sendDeviceStateChanged();
                 }
+                Log.d(TAG, "Exit onSignalStrengthsChanged");
             }
 
             /* convert [0,31] ASU signal strength to the [0,5] expected by

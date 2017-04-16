@@ -27,6 +27,7 @@ import android.os.Message;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
 import android.util.Log;
+import com.android.bluetooth.OolConnManager;
 
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AbstractionLayer;
@@ -69,6 +70,13 @@ public class SdpManager {
         OPP_FORMAT_VMESSAGE,
         OPP_FORMAT_ANY_TYPE_OF_OBJ};
 
+    public static final byte[] OPP_FORMAT= {
+            OPP_FORMAT_VCARD21,
+            OPP_FORMAT_VCARD30,
+            OPP_FORMAT_ICAL20,
+            OPP_FORMAT_ANY_TYPE_OF_OBJ};
+
+
     /* Variables to keep track of ongoing and queued search requests.
      * mTrackerLock must be held, when using/changing sSdpSearchTracker
      * and mSearchInProgress. */
@@ -77,7 +85,7 @@ public class SdpManager {
     static Object mTrackerLock = new Object();
 
     /* The timeout to wait for reply from native. Should never fire. */
-    private static final int SDP_INTENT_DELAY = 6000;
+    private static final int SDP_INTENT_DELAY = 11000;
     private static final int MESSAGE_SDP_INTENT = 2;
 
     // We need a reference to the adapter service, to be able to send intents
@@ -365,6 +373,7 @@ public class SdpManager {
             if(D) Log.d(TAG, "UUID: " + Arrays.toString(uuid));
             if(D) Log.d(TAG, "UUID in parcel: " + ((Utils.byteArrayToUuid(uuid))[0]).toString());
             sendSdpIntent(inst, sdpRecord, moreResults);
+            OolConnManager.saveOppSdpRecord (sdpRecord,inst.getDevice());
         }
     }
 

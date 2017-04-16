@@ -44,6 +44,7 @@ import android.app.Activity;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothDevicePicker;
 import android.content.Intent;
+import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.net.Uri;
@@ -52,6 +53,7 @@ import android.util.Log;
 import android.provider.Settings;
 
 import android.util.Patterns;
+import android.widget.Toast;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Locale;
@@ -64,8 +66,7 @@ import java.util.Locale;
 public class BluetoothOppLauncherActivity extends Activity {
     private static final String TAG = "BluetoothLauncherActivity";
     private static final boolean D = Constants.DEBUG;
-    private static final boolean V = Constants.VERBOSE;
-
+    private static final boolean V = Log.isLoggable(Constants.TAG, Log.VERBOSE);
     // Regex that matches characters that have special meaning in HTML. '<', '>', '&' and
     // multiple continuous spaces.
     private static final Pattern PLAIN_TEXT_TO_ESCAPE = Pattern.compile("[<>&]| {2,}|\r?\n");
@@ -90,6 +91,11 @@ public class BluetoothOppLauncherActivity extends Activity {
             }
 
             /*
+             * SECURITY_EXCEPTION Google Photo grant-uri-permission
+             */
+            grantReadPermissionToUri(intent.getClipData());
+
+            /*
              * Other application is trying to share a file via Bluetooth,
              * probably Pictures, videos, or vCards. The Intent should contain
              * an EXTRA_STREAM with the data to attach.
@@ -111,11 +117,7 @@ public class BluetoothOppLauncherActivity extends Activity {
                     // session to DB.
                     Thread t = new Thread(new Runnable() {
                         public void run() {
-                            BluetoothOppManager.getInstance(BluetoothOppLauncherActivity.this)
-                                .saveSendingFileInfo(type,stream.toString(), false);
-                            //Done getting file info..Launch device picker and finish this activity
-                            launchDevicePicker();
-                            finish();
+                            sendFileInfo(type, stream.toString(), false);
                         }
                     });
                     t.start();
@@ -127,12 +129,7 @@ public class BluetoothOppLauncherActivity extends Activity {
                     if (fileUri != null) {
                         Thread t = new Thread(new Runnable() {
                             public void run() {
-                                BluetoothOppManager.getInstance(BluetoothOppLauncherActivity.this)
-                                    .saveSendingFileInfo(type,fileUri.toString(), false);
-                                //Done getting file info..Launch device picker
-                                //and finish this activity
-                                launchDevicePicker();
-                                finish();
+                                sendFileInfo(type, fileUri.toString(), false);
                             }
                         });
                         t.start();
@@ -155,12 +152,17 @@ public class BluetoothOppLauncherActivity extends Activity {
                                 + mimeType);
                     Thread t = new Thread(new Runnable() {
                         public void run() {
-                            BluetoothOppManager.getInstance(BluetoothOppLauncherActivity.this)
-                                .saveSendingFileInfo(mimeType,uris, false);
-                            //Done getting file info..Launch device picker
-                            //and finish this activity
-                            launchDevicePicker();
-                            finish();
+                            try {
+                                BluetoothOppManager.getInstance(BluetoothOppLauncherActivity.this)
+                                    .saveSendingFileInfo(mimeType,uris, false);
+                                //Done getting file info..Launch device picker
+                                //and finish this activity
+                                launchDevicePicker();
+                                finish();
+                            } catch (IllegalArgumentException exception) {
+                                showToast(exception.getMessage());
+                                finish();
+                            }
                         }
                     });
                     t.start();
@@ -221,16 +223,16 @@ public class BluetoothOppLauncherActivity extends Activity {
 
         // Check if airplane mode is on
         final boolean isAirplaneModeOn = Settings.System.getInt(resolver,
-                Settings.System.AIRPLANE_MODE_ON, 0) == 1;
+                Settings.Global.AIRPLANE_MODE_ON, 0) == 1;
         if (!isAirplaneModeOn) {
             return true;
         }
 
         // Check if airplane mode matters
         final String airplaneModeRadios = Settings.System.getString(resolver,
-                Settings.System.AIRPLANE_MODE_RADIOS);
+                Settings.Global.AIRPLANE_MODE_RADIOS);
         final boolean isAirplaneSensitive = airplaneModeRadios == null ? true :
-                airplaneModeRadios.contains(Settings.System.RADIO_BLUETOOTH);
+                airplaneModeRadios.contains(Settings.Global.RADIO_BLUETOOTH);
         if (!isAirplaneSensitive) {
             return true;
         }
@@ -239,7 +241,7 @@ public class BluetoothOppLauncherActivity extends Activity {
         final String airplaneModeToggleableRadios = Settings.System.getString(resolver,
                 Settings.System.AIRPLANE_MODE_TOGGLEABLE_RADIOS);
         final boolean isAirplaneToggleable = airplaneModeToggleableRadios == null ? false :
-                airplaneModeToggleableRadios.contains(Settings.System.RADIO_BLUETOOTH);
+                airplaneModeToggleableRadios.contains(Settings.Global.RADIO_BLUETOOTH);
         if (isAirplaneToggleable) {
             return true;
         }
@@ -379,4 +381,52 @@ public class BluetoothOppLauncherActivity extends Activity {
         }
         return text;
     }
+
+    /*
+     *  Grant permission to access a specific Uri.
+     */
+    private void grantReadPermissionToUri(ClipData clipData) {
+        if (clipData == null) {
+            Log.i(TAG,"ClipData is null ");
+            return;
+        }
+        try {
+            String packageName = getPackageName();
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                ClipData.Item item = clipData.getItemAt(i);
+                Uri uri = item.getUri();
+                if (uri != null) {
+                    String scheme = uri.getScheme();
+                    if (scheme != null && scheme.equals(ContentResolver.SCHEME_CONTENT)) {
+                        grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }
+                }
+            }
+        } catch (Exception e) {
+          Log.e(TAG,"GrantUriPermission :" + e.toString());
+        }
+    }
+
+    private void sendFileInfo(String mimeType, String uriString, boolean isHandover) {
+        BluetoothOppManager manager = BluetoothOppManager.getInstance(getApplicationContext());
+        try {
+            manager.saveSendingFileInfo(mimeType, uriString, isHandover);
+            launchDevicePicker();
+            finish();
+        } catch (IllegalArgumentException exception) {
+            showToast(exception.getMessage());
+            finish();
+        }
+    }
+
+    private void showToast(final String msg) {
+        BluetoothOppLauncherActivity.this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
 }
+

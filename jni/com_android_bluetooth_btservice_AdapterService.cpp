@@ -23,6 +23,8 @@
 #include "android_runtime/AndroidRuntime.h"
 #include "android_runtime/Log.h"
 
+#include <hardware/vendor.h>
+
 #include <string.h>
 #include <pthread.h>
 
@@ -58,10 +60,11 @@ static struct {
 
 static const bt_interface_t *sBluetoothInterface = NULL;
 static const btsock_interface_t *sBluetoothSocketInterface = NULL;
+static const btvendor_interface_t *sBluetoothVendorInterface = NULL;
 static JNIEnv *callbackEnv = NULL;
 
-static jobject sJniAdapterServiceObj;
-static jobject sJniCallbacksObj;
+static jobject sJniAdapterServiceObj = NULL;
+static jobject sJniCallbacksObj = NULL;
 static jfieldID sJniCallbacksField;
 
 
@@ -97,9 +100,11 @@ static void adapter_state_change_callback(bt_state_t status) {
        return;
     }
     ALOGV("%s: Status is: %d", __FUNCTION__, status);
-
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_stateChangeCallback, (jint)status);
-
+    if(sJniCallbacksObj) {
+       callbackEnv->CallVoidMethod(sJniCallbacksObj, method_stateChangeCallback, (jint)status);
+    } else {
+       ALOGE("JNI ERROR : JNI reference already cleaned : adapter_state_change_callback", __FUNCTION__);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
 }
 
@@ -177,8 +182,10 @@ static void adapter_properties_callback(bt_status_t status, int num_properties,
         return;
     }
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_adapterPropertyChangedCallback, types,
-                                props);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_adapterPropertyChangedCallback, types,
+                                    props);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(props);
     callbackEnv->DeleteLocalRef(types);
@@ -247,8 +254,10 @@ static void remote_device_properties_callback(bt_status_t status, bt_bdaddr_t *b
         return;
     }
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_devicePropertyChangedCallback, addr,
-                                types, props);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_devicePropertyChangedCallback, addr,
+                                    types, props);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(props);
     callbackEnv->DeleteLocalRef(types);
@@ -289,7 +298,9 @@ static void device_found_callback(int num_properties, bt_property_t *properties)
     remote_device_properties_callback(BT_STATUS_SUCCESS, (bt_bdaddr_t *)properties[addr_index].val,
                                       num_properties, properties);
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_deviceFoundCallback, addr);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_deviceFoundCallback, addr);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(addr);
 }
@@ -312,8 +323,10 @@ static void bond_state_changed_callback(bt_status_t status, bt_bdaddr_t *bd_addr
     }
     callbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte *)bd_addr);
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_bondStateChangeCallback, (jint) status,
-                                addr, (jint)state);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_bondStateChangeCallback, (jint) status,
+                                    addr, (jint)state);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(addr);
 }
@@ -337,8 +350,10 @@ static void acl_state_changed_callback(bt_status_t status, bt_bdaddr_t *bd_addr,
     }
     callbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte *)bd_addr);
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_aclStateChangeCallback, (jint) status,
-                                addr, (jint)state);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_aclStateChangeCallback, (jint) status,
+                                    addr, (jint)state);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(addr);
 }
@@ -351,9 +366,10 @@ static void discovery_state_changed_callback(bt_discovery_state_t state) {
 
     ALOGV("%s: DiscoveryState:%d ", __FUNCTION__, state);
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_discoveryStateChangeCallback,
-                                (jint)state);
-
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_discoveryStateChangeCallback,
+                                    (jint)state);
+    }
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
 }
 
@@ -379,8 +395,10 @@ static void pin_request_callback(bt_bdaddr_t *bd_addr, bt_bdname_t *bdname, uint
 
     callbackEnv->SetByteArrayRegion(devname, 0, sizeof(bt_bdname_t), (jbyte*)bdname);
 
+    if (sJniCallbacksObj) {
     callbackEnv->CallVoidMethod(sJniCallbacksObj, method_pinRequestCallback, addr, devname, cod,
             min_16_digits);
+    }
 
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(addr);
@@ -414,8 +432,10 @@ static void ssp_request_callback(bt_bdaddr_t *bd_addr, bt_bdname_t *bdname, uint
     if (devname == NULL) goto Fail;
     callbackEnv->SetByteArrayRegion(devname, 0, sizeof(bt_bdname_t), (jbyte*)bdname);
 
-    callbackEnv->CallVoidMethod(sJniCallbacksObj, method_sspRequestCallback, addr, devname, cod,
-                                (jint) pairing_variant, pass_key);
+    if (sJniCallbacksObj) {
+        callbackEnv->CallVoidMethod(sJniCallbacksObj, method_sspRequestCallback, addr, devname, cod,
+                                    (jint) pairing_variant, pass_key);
+    }
 
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(addr);
@@ -480,9 +500,13 @@ static void energy_info_recv_callback(bt_activity_energy_info *p_energy_info,
         callbackEnv->DeleteLocalRef(uidObj);
     }
 
-    callbackEnv->CallVoidMethod(sJniAdapterServiceObj, method_energyInfo, p_energy_info->status,
-        p_energy_info->ctrl_state, p_energy_info->tx_time, p_energy_info->rx_time,
-        p_energy_info->idle_time, p_energy_info->energy_used, array);
+    if (sJniAdapterServiceObj) {
+        callbackEnv->CallVoidMethod(sJniAdapterServiceObj, method_energyInfo, p_energy_info->status,
+            p_energy_info->ctrl_state, p_energy_info->tx_time, p_energy_info->rx_time,
+            p_energy_info->idle_time, p_energy_info->energy_used, array);
+    } else {
+       ALOGE("JNI ERROR : JNI reference already cleaned : energy_info_recv_callback", __FUNCTION__);
+    }
 
     checkAndClearExceptionFromCallback(callbackEnv, __FUNCTION__);
     callbackEnv->DeleteLocalRef(array);
@@ -502,7 +526,8 @@ static bt_callbacks_t sBluetoothCallbacks = {
     callback_thread_event,
     dut_mode_recv_callback,
     le_test_mode_recv_callback,
-    energy_info_recv_callback
+    energy_info_recv_callback,
+    NULL
 };
 
 // The callback to call when the wake alarm fires.
@@ -522,6 +547,7 @@ static bool set_wake_alarm_callout(uint64_t delay_millis, bool should_wake,
     JNIEnv *env;
     JavaVM *vm = AndroidRuntime::getJavaVM();
     jint status = vm->GetEnv((void **)&env, JNI_VERSION_1_6);
+    jboolean ret = JNI_FALSE;
 
     if (status != JNI_OK && status != JNI_EDETACHED) {
         ALOGE("%s unable to get environment for JNI call", __func__);
@@ -537,9 +563,15 @@ static bool set_wake_alarm_callout(uint64_t delay_millis, bool should_wake,
     sAlarmCallbackData = data;
 
     jboolean jshould_wake = should_wake ? JNI_TRUE : JNI_FALSE;
-    jboolean ret = env->CallBooleanMethod(sJniAdapterServiceObj, method_setWakeAlarm,
+    if (sJniAdapterServiceObj) {
+        ret = env->CallBooleanMethod(sJniAdapterServiceObj, method_setWakeAlarm,
             (jlong)delay_millis, jshould_wake);
+    } else {
+       ALOGE("JNI ERROR : JNI reference already cleaned : set_wake_alarm_callout", __FUNCTION__);
+    }
+
     if (!ret) {
+        ALOGE("%s setWakeAlarm failed:ret= %d ", __func__, ret);
         sAlarmCallback = NULL;
         sAlarmCallbackData = NULL;
     }
@@ -567,10 +599,14 @@ static int acquire_wake_lock_callout(const char *lock_name) {
     jint ret = BT_STATUS_SUCCESS;
     jstring lock_name_jni = env->NewStringUTF(lock_name);
     if (lock_name_jni) {
-        bool acquired = env->CallBooleanMethod(sJniAdapterServiceObj,
-                            method_acquireWakeLock, lock_name_jni);
-        if (!acquired) ret = BT_STATUS_WAKELOCK_ERROR;
-        env->DeleteLocalRef(lock_name_jni);
+        if (sJniAdapterServiceObj) {
+            bool acquired = env->CallBooleanMethod(sJniAdapterServiceObj,
+                                   method_acquireWakeLock, lock_name_jni);
+            if (!acquired) ret = BT_STATUS_WAKELOCK_ERROR;
+            env->DeleteLocalRef(lock_name_jni);
+        } else {
+            ALOGE("JNI ERROR : JNI reference already cleaned : acquire_wake_lock_callout", __FUNCTION__);
+        }
     } else {
         ALOGE("%s unable to allocate string: %s", __func__, lock_name);
         ret = BT_STATUS_NOMEM;
@@ -599,10 +635,14 @@ static int release_wake_lock_callout(const char *lock_name) {
     jint ret = BT_STATUS_SUCCESS;
     jstring lock_name_jni = env->NewStringUTF(lock_name);
     if (lock_name_jni) {
-        bool released = env->CallBooleanMethod(sJniAdapterServiceObj,
-                            method_releaseWakeLock, lock_name_jni);
-        if (!released) ret = BT_STATUS_WAKELOCK_ERROR;
-        env->DeleteLocalRef(lock_name_jni);
+        if (sJniAdapterServiceObj) {
+            bool released = env->CallBooleanMethod(sJniAdapterServiceObj,
+                                method_releaseWakeLock, lock_name_jni);
+            if (!released) ret = BT_STATUS_WAKELOCK_ERROR;
+            env->DeleteLocalRef(lock_name_jni);
+        } else {
+            ALOGE("JNI ERROR : JNI reference already cleaned : release_wake_lock_callout", __FUNCTION__);
+        }
     } else {
         ALOGE("%s unable to allocate string: %s", __func__, lock_name);
         ret = BT_STATUS_NOMEM;
@@ -704,15 +744,22 @@ static bool initNative(JNIEnv* env, jobject obj) {
             env->FindClass("android/bluetooth/UidTraffic"));
 
     sJniAdapterServiceObj = env->NewGlobalRef(obj);
-    sJniCallbacksObj = env->NewGlobalRef(env->GetObjectField(obj, sJniCallbacksField));
+    if (sJniCallbacksField) {
+        sJniCallbacksObj = env->NewGlobalRef(env->GetObjectField(obj, sJniCallbacksField));
+    } else {
+        ALOGE("Error: sJniCallbacksField is null\n");
+    }
 
     if (sBluetoothInterface) {
         int ret = sBluetoothInterface->init(&sBluetoothCallbacks);
-        if (ret != BT_STATUS_SUCCESS) {
+        if (ret != BT_STATUS_SUCCESS && ret != BT_STATUS_DONE) {
             ALOGE("Error while setting the callbacks: %d\n", ret);
             sBluetoothInterface = NULL;
             return JNI_FALSE;
         }
+
+        /*disable these os_callout settings, so that native wake_lock will be enabled*/
+#if 0
         ret = sBluetoothInterface->set_os_callouts(&sBluetoothOsCallouts);
         if (ret != BT_STATUS_SUCCESS) {
             ALOGE("Error while setting Bluetooth callouts: %d\n", ret);
@@ -720,7 +767,7 @@ static bool initNative(JNIEnv* env, jobject obj) {
             sBluetoothInterface = NULL;
             return JNI_FALSE;
         }
-
+#endif
         if ( (sBluetoothSocketInterface = (btsock_interface_t *)
                   sBluetoothInterface->get_profile_interface(BT_PROFILE_SOCKETS_ID)) == NULL) {
                 ALOGE("Error getting socket interface");
@@ -740,10 +787,19 @@ static bool cleanupNative(JNIEnv *env, jobject obj) {
     sBluetoothInterface->cleanup();
     ALOGI("%s: return from cleanup",__FUNCTION__);
 
-    env->DeleteGlobalRef(sJniCallbacksObj);
-    env->DeleteGlobalRef(sJniAdapterServiceObj);
-    env->DeleteGlobalRef(android_bluetooth_UidTraffic.clazz);
-    android_bluetooth_UidTraffic.clazz = NULL;
+    if (sJniCallbacksObj) {
+        env->DeleteGlobalRef(sJniCallbacksObj);
+        sJniCallbacksObj = NULL;
+    }
+    if (sJniAdapterServiceObj) {
+        env->DeleteGlobalRef(sJniAdapterServiceObj);
+        sJniAdapterServiceObj = NULL;
+    }
+    if (android_bluetooth_UidTraffic.clazz) {
+        env->DeleteGlobalRef(android_bluetooth_UidTraffic.clazz);
+        android_bluetooth_UidTraffic.clazz = NULL;
+    }
+
     return JNI_TRUE;
 }
 
@@ -1133,6 +1189,67 @@ static jboolean setDevicePropertyNative(JNIEnv *env, jobject obj, jbyteArray add
     return result;
 }
 
+static int getSocketOptNative(JNIEnv *env, jobject obj, jint type, jint channel, jint optionName,
+                                        jbyteArray optionVal) {
+    ALOGV("%s:",__FUNCTION__);
+
+    jbyte *option_val = NULL;
+    int option_len;
+    bt_status_t status;
+
+    if (!sBluetoothSocketInterface) return -1;
+
+    option_val = env->GetByteArrayElements(optionVal, NULL);
+    if (option_val == NULL) {
+        ALOGE("getSocketOptNative :jniThrowIOException ");
+        jniThrowIOException(env, EINVAL);
+        return -1;
+    }
+
+    if ( (status = sBluetoothSocketInterface->get_sock_opt((btsock_type_t)type, channel,
+         (btsock_option_type_t) optionName, (void *) option_val, &option_len)) !=
+                                                           BT_STATUS_SUCCESS) {
+        ALOGE("get_sock_opt failed: %d", status);
+        goto Fail;
+    }
+    env->ReleaseByteArrayElements(optionVal, option_val, 0);
+
+    return option_len;
+Fail:
+    env->ReleaseByteArrayElements(optionVal, option_val, 0);
+    return -1;
+}
+
+static int setSocketOptNative(JNIEnv *env, jobject obj, jint type, jint channel, jint optionName,
+                                        jbyteArray optionVal, jint optionLen) {
+    ALOGV("%s:",__FUNCTION__);
+
+    jbyte *option_val = NULL;
+    bt_status_t status;
+
+    if (!sBluetoothSocketInterface) return -1;
+
+    option_val = env->GetByteArrayElements(optionVal, NULL);
+    if (option_val == NULL) {
+        ALOGE("setSocketOptNative:jniThrowIOException ");
+        jniThrowIOException(env, EINVAL);
+        return -1;
+    }
+
+    if ( (status = sBluetoothSocketInterface->set_sock_opt((btsock_type_t)type, channel,
+         (btsock_option_type_t) optionName, (void *) option_val, optionLen)) !=
+                                                         BT_STATUS_SUCCESS) {
+        ALOGE("set_sock_opt failed: %d", status);
+        goto Fail;
+    }
+    env->ReleaseByteArrayElements(optionVal, option_val, 0);
+
+    return 0;
+Fail:
+    env->ReleaseByteArrayElements(optionVal, option_val, 0);
+    return -1;
+}
+
 static jboolean getRemoteServicesNative(JNIEnv *env, jobject obj, jbyteArray address) {
     ALOGV("%s:",__FUNCTION__);
 
@@ -1355,7 +1472,10 @@ static JNINativeMethod sMethods[] = {
     {"dumpNative", "(Ljava/io/FileDescriptor;[Ljava/lang/String;)V", (void*) dumpNative},
     {"factoryResetNative", "()Z", (void*)factoryResetNative},
     {"interopDatabaseClearNative", "()V", (void*) interopDatabaseClearNative},
-    {"interopDatabaseAddNative", "(I[BI)V", (void*) interopDatabaseAddNative}
+    {"interopDatabaseAddNative", "(I[BI)V", (void*) interopDatabaseAddNative},
+    {"getSocketOptNative", "(III[B)I", (void*) getSocketOptNative},
+    {"setSocketOptNative", "(III[BI)I", (void*) setSocketOptNative}
+
 };
 
 int register_com_android_bluetooth_btservice_AdapterService(JNIEnv* env)
@@ -1440,6 +1560,11 @@ jint JNI_OnLoad(JavaVM *jvm, void *reserved)
 
     if ((status = android::register_com_android_bluetooth_sdp(e)) < 0) {
         ALOGE("jni sdp registration failure: %d", status);
+        return JNI_ERR;
+    }
+
+    if ((status = android::register_com_android_bluetooth_btservice_vendor(e)) < 0) {
+        ALOGE("jni vendor registration failure: %d", status);
         return JNI_ERR;
     }
 
