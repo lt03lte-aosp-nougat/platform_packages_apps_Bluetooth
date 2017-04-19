@@ -76,7 +76,7 @@ static void snooplog_status_callback(bool status){
 static btvendor_callbacks_t sBluetoothVendorCallbacks = {
     sizeof(sBluetoothVendorCallbacks),
     bredr_cleanup_callback,
-    snooplog_status_callback
+   // snooplog_status_callback
 };
 
 static void classInitNative(JNIEnv* env, jclass clazz) {
@@ -119,7 +119,7 @@ static void initNative(JNIEnv *env, jobject object) {
 
 static void cleanupNative(JNIEnv *env, jobject object) {
     const bt_interface_t* btInf;
-    bt_status_t status;
+  //  bt_status_t status;
 
     if ( (btInf = getBluetoothInterface()) == NULL) {
         ALOGE("Bluetooth module is not loaded");
@@ -158,7 +158,7 @@ static void captureVndLogsNative(JNIEnv *env, jobject object) {
 
     if (!sBluetoothVendorInterface) return;
 
-    sBluetoothVendorInterface->capture_vnd_logs();
+   // sBluetoothVendorInterface->capture_vnd_logs();
     return;
 }
 

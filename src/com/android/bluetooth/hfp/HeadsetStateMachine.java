@@ -120,6 +120,7 @@ final class HeadsetStateMachine extends StateMachine {
     static final int QUERY_PHONE_STATE_AT_SLC = 20;
     static final int UPDATE_CALL_TYPE = 21;
     static final int SEND_INCOMING_CALL_IND = 22;
+    static final int BIND_RESPONSE = 23;
 
     private static final int STACK_EVENT = 101;
     private static final int DIALING_OUT_TIMEOUT = 102;
